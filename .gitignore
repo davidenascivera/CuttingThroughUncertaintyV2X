@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+.pyc
+
+# Virtual environments
+venv/
+env/
+.v2x-perception/
+.vscode/
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Logs and debug files
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git config and tokens
+*.env
+*.secret
+
+# VSCode settings (optional)
+.vscode/
+
+# Data & outputs (if generated)
+*.csv
+*.npy
+*.npz
+sim_log.csv
+log.txt
+
+# Matplotlib cache
+.mplconfig/
