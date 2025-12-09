@@ -2,14 +2,15 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Polygon
 from scipy.optimize import linear_sum_assignment
-from SME_mine.SME_module import SMEModule
+from SBE_module.SME_module import SMEModule
 
 import logging
 logger = logging.getLogger(__name__)
 
 
 class TrackManager:
-    def __init__(self, dA1:int, dR1:int, measurements: dict[int, dict[str, any]], sme_dict: dict[int, any],renderer = None, verbose:bool =False, id_counter:int  =0, color_dict:dict[int,str]={}) -> None:
+    def __init__(self, dA1:int, dR1:int, measurements: dict[int, dict[str, any]], sme_dict: dict[int, any],renderer = None, verbose:bool =False, id_counter:int  =0, color_dict:dict[int,str]={},
+                 err_heading:float = 0, err_vel:float = 0) -> None:
         '''
         Initialize the TrackManager with measurements and SME dictionary.
         '''
@@ -22,6 +23,9 @@ class TrackManager:
         self.mature_track_keys = []
         self.dA1 = dA1
         self.dR1 = dR1
+        self.err_heading = err_heading
+        self.err_vel = err_vel
+
                    
     def process_measurements(self, dt:float):
         """Process all current measurements and update tracks"""
@@ -32,6 +36,9 @@ class TrackManager:
             if value['dt'] == dt
         }
         
+        # print(f"Processing measurements at dt: {dt} with {len(current_meas)} current measurements")
+        # for k,v in current_meas.items():
+        #     logger.info(f"Measure with id {k} - tracking ped {v['gt_id']} - sensor {v['sensor_id']} - track {v['track_id']}")
         # Associate measurements to mature tracks
         self._associate_with_mature_tracks(current_meas)
         
@@ -64,6 +71,7 @@ class TrackManager:
                 center_meas = current_meas[meas]['pos'] 
                 
                 distance = np.linalg.norm(np.array(center_meas)-np.array(center_SME))
+                
                 if distance > 1 or current_meas[meas]['sensor_id'] != self.SME_dict[track_id].sensor_id:
                     ass_matrix[row, col] = 1e6
                 else:    
@@ -115,10 +123,11 @@ class TrackManager:
                     center_meas = unassigned_meas[meas_key]['pos']
                     
                     distance = np.linalg.norm(np.array(center_meas)-np.array(center_SME))
-                    if distance > 1 or current_meas[meas_key]['sensor_id'] != self.SME_dict[track_id].sensor_id:
+                    if distance > 1.5 or current_meas[meas_key]['sensor_id'] != self.SME_dict[track_id].sensor_id:
                         tent_ass_matrix[row, col] = 1e6
                     else:    
                         tent_ass_matrix[row, col] = distance
+                        # logger.debug(f"The distance is {distance:.3f} between meas {current_meas[meas_key]['meas_id']} and SME {self.SME_dict[track_id].track_id}. Pos meas: {center_meas}, pos centroid: {center_SME}")
 
             
             # # Plotting the matrix if need
@@ -142,7 +151,7 @@ class TrackManager:
                 
                 if tent_ass_matrix[i, j] != 0 and tent_ass_matrix[i, j] < 1e5: # Only process if there's an actual association
                     self.measurements[meas_key]['track_id'] = tent_track_id
-                    self.SME_dict[tent_track_id].hits += 1
+                    # self.SME_dict[tent_track_id].hits += 1
                     if self.verbose:
                         logger.info(f"Tentative pair: {meas_key} -> {tent_track_id} | Cost: {tent_ass_matrix[i, j]:.4f}")
 
@@ -195,11 +204,12 @@ class TrackManager:
                 gt_ped = meas['gt_id']
                 track_id = self.id_counter
                 if self.verbose:
-                    logger.info(f"Creating new SME for track_id {track_id} (dt: {dt}) with {meas_id} for ped {meas['gt_id']%10} with sensor {meas['sensor_id']}")
-                self.SME_dict[track_id] = SMEModule(Xc = self.measurements[meas_id]['meas_set'], max_vel=1.8, acc=0.5, dt=0.1, ax=self.renderer.ax,delta_a=self.dA1, delta_r=self.dR1,
-                                                plot_set=True, id = gt_ped, sens_id=meas['sensor_id'], colors=self.color_dict, plot_reach=True, plot_id=True,verbose = self.verbose) # This second row is for how well we want to overapproximate the circles
+                    logger.info(f"Creating new SME for track_id {track_id} (dt: {dt}) with {meas_id} for ped {meas['gt_id']%10} with sensor {meas['sensor_id']} meas_id {meas_id}")
+                self.SME_dict[track_id] = SMEModule(Xc = self.measurements[meas_id]['meas_set'], max_vel=1.8, acc=0.5, dt=0.1, ax=self.renderer.ax, delta_a=self.dA1, delta_r=self.dR1,
+                                                plot_set=True, id = gt_ped, sens_id=meas['sensor_id'], colors=self.color_dict, plot_reach=True, plot_id=False,verbose = self.verbose, track_id = track_id,
+                                                err_heading = self.err_heading, err_vel = self.err_vel) # This second row is for how well we want to overapproximate the circles
                 self.SME_dict[track_id].predict(a_meas=np.rad2deg(self.measurements[meas_id]['head']), v_meas=self.measurements[meas_id]['vel'],dt_update=dt) # Predict the reachable set of the pedestrian
-                self.SME_dict[track_id].hits += 1
+                
             
             # Update the filter
             ### NB: we have the reachable set from the previous time step and we are updating it with the new measurement.
@@ -218,7 +228,10 @@ class TrackManager:
                     continue
                 
                 self.SME_dict[track_id].intersect(meas_set=meas_set_update, lw_int=1, lw_prev_reach=0,dt_update=dt)
-                self.SME_dict[track_id].predict(a_meas=np.rad2deg(self.measurements[meas_id]['head']), v_meas=self.measurements[meas_id]['vel'], lw_pred=1,dt_update=dt) # Predict the reachable set of the pedestrian          
+                measured_angle = np.rad2deg(self.measurements[meas_id]['head']) + np.random.uniform(-self.err_heading/2, self.err_heading/2) # Add some noise to the angle
+                noise = np.random.uniform(-self.err_vel / 2, self. err_vel/ 2)
+                measured_vel = max(self.measurements[meas_id]['vel'] + noise, 0)
+                self.SME_dict[track_id].predict(a_meas= measured_angle, v_meas=measured_vel, lw_pred=1,dt_update=dt) # Predict the reachable set of the pedestrian
                 
                 # renderer.log_to_csv(filename, [dt, Polygon(SME_dict[1003].Xc).area, Polygon(SME_dict[id_meas].polygon).area]) 
                 # pos_gt = [v['pos'] for v in vru_objects if v['id']]

@@ -1,267 +1,304 @@
 # 1. IMPORTS AND SETUP
 # --------------------
 import sys, time, random, logging
-from typing import Tuple
-
 import numpy as np
-import pandas as pd
-from shapely.geometry import Polygon, Point
-
-from src.CTU.constants import *
-from SME_mine.SME_module import SMEModule
+import os
+from constants import *
+from SBE_module.SME_module import SMEModule
 from map_renderer import MapRenderer
 from TrackManager import TrackManager
-from dataset.pedestrian_loader import get_position_at_time
-
+from PostAssociation import PostAssociation
 from utils import (
-    lin_velocity, get_sensor_list, check_point_in_polygon,
-    generate_clutter, check_pedestrians_in_intersections
+    get_sensor_list, check_point_in_polygon, generate_clutter,
+    check_pedestrians_in_intersections, get_position_at_time, get_trajectory_segments
 )
 
 # Data association method: Hungarian + blacklist heuristic
-# from DataAssociationGreedy import DataAssociationManager
-from DataAssociation import DataAssociationManager
+from DataAssociationGreedy import DataAssociationManager as DataAssociationManagerGreedy
+from DataAssociation import DataAssociationManager as DataAssociationManagerNew
 
 # Logging configuration
 logging.basicConfig(
     level=logging.DEBUG,
-    handlers=[logging.FileHandler('log.txt', mode='w'),
-              logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.FileHandler("log.txt", mode="w"),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+random_var = 2
+random.seed(random_var)  # Set a seed for reproducibility
+np.random.seed(random_var)  # Set a seed for reproducibility
 
 
-def Main():
-  # random.seed(42)  # Set a seed for reproducibility
-  '''
-  2. SIMULATION CONFIGURATION
-  
-  '''
+def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
+    # random.seed(42)  # Set a seed for reproducibility
+    """
+    2. SIMULATION CONFIGURATION
+    """
 
-  # -------------------------
-  # 2.1. Time Configuration
-  time_steps:np.NDArray[np.float64] = np.linspace(0, 11, 111)  # 15 seconds simulation with 151 steps
-  EV_present:bool = False 
-  alpha_ray:float = 0.08
-  tot_error:int = 0
+    # -------------------------
+    # 2.1. Time Configuration
+    time_steps: np.NDArray[np.float64] = np.linspace(
+        0, 8, 81
+    )  # 15 seconds simulation with 151 steps
+    tot_error: int = 0
 
-  # 2.2. Visualization Settings
-  RECORDING: bool = False        # Enable frame recording
-  log_data: bool = False         # Log data to CSV file
-  RENDER_PLOT: bool = True           # Render the frames
-  time_sleep = 0.01        # Inter-frame delay
-  manual_mode = -1     # Frame-by-frame mode (-1 for auto)
-  windows_scale = .35     # Scale the window size
+    # 2.2. Visualization Settings
+    RECORDING: bool = False  # Enable frame recording
+    log_data: bool = False  # Log data to CSV file
+    RENDER_PLOT: bool = True  # Render the frames
+    time_sleep = 0.01  # Inter-frame delay
+    manual_mode = 9  # Frame-by-frame mode (-1 for auto)
+    windows_scale = 0.4  # Scale the window size
 
-  dR1 = 1  # Note that the error is expressed in r_0+-dR1 and a_0 +-dA1
-  dA1 = 6
-  blacklist = set()
-  counter:int = 0
+    lambda_clutter = 0  # Clutter rate
 
-  peds = [1,2,3,4,5,6,7,8,9]
+    dR1 = 1  # Note that the error is expressed in r_0+-dR1 and a_0 +-dA1
+    dA1 = 8
+    perc_working = 2
+    heading_error_degrees = 10
+    velocity_error_speed = 1
 
-  # ------------------------------------------------
-  # Create Renderer
-  # ------------------------------------------------
-  # Dopo aver creato il renderer:
-  renderer = MapRenderer()
-  id_counter = 0
+    blacklist = set()
+    counter: int = 0
 
-  # Add frame timing variable
-  list_ev_hits: list[dict[str, tuple[np.float64, np.float64]]] = [] # list of hitted pedestrian, dict compoes of [{'pos': (np.float64(x), np.float64(y)), 'id': 4}]
-  list_rsu_hits: list[dict[str, tuple[np.float64, np.float64]]] = []
-  SME_dict: dict[int, SMEModule] = {}
+    peds = [1, 2, 3, 4, 5, 6, 8, 9]
+    peds = [2, 3]  # The one not crossing the intersection and realistic
 
-  measurements = {}
-  frame_duration:float = 0
-  color_dict = {1000:'green', 2000:'yellow', 3000:'blue'}
-  '''
-  # 3. SIMULATION LOOP
-  '''
-  EV_pos =   (5,    -2.5)
-  # ----------------
-  for dt in time_steps:
+    # ------------------------------------------------
+    # Create Renderer
+    # ------------------------------------------------
+    # Dopo aver creato il renderer:
+    renderer = MapRenderer()
+    filename = renderer.init_csv("sim_log.csv", log_data=log_data)
+    id_counter = 0
+
+    # Add frame timing variable
+    list_ev_hits: list[dict[str, tuple[np.float64, np.float64]]] = (
+        []
+    )  # list of hitted pedestrian, dict compoes of [{'pos': (np.float64(x), np.float64(y)), 'id': 4}]
+    list_rsu_hits: list[dict[str, tuple[np.float64, np.float64]]] = []
+    SME_dict: dict[int, SMEModule] = {}
+
+    measurements = {}
+    frame_duration: float = 0
     
+    csv_traj = os.path.join(os.path.dirname(__file__), 'crowds_trajectories.csv')
+    print(f"file path: {csv_traj}")
     
-    # Start timing new frame
-    frame_start_time: time = time.time()
-    
-    dt = np.round(dt,2)
-    # 3.1. Environment Setup
-    logger.info(f"--------------------dt:{dt} (previous frame: {frame_duration:.3f}s)--------------------")
-    
-    renderer.clear_scene()
-    y_top_edge, y_bottom_edge = renderer.draw_road(ROAD_START_X, ROAD_START_Y, 
-                                                  ROAD_LENGTH, LANE_WIDTH, 
-                                                  NUM_LANES, SHOULDER_WIDTH)
+    """
+    3. SIMULATION LOOP
+    """
+    EV_pos = (5, -2.5)
+    use_greedy: bool = greedy
 
-    # 3.2. Static Object Rendering
-    renderer.draw_vehicle(PV_POS, VEH_LENGTH, VEH_WIDTH, 'lightblue', 'PV (2)', label_color='black')
-    
-    renderer.draw_rsu(RSU_POS, 2, 1, 'darkgreen', 'RSU(1)')
-    renderer.draw_rsu(RSU_POS2, 2, 1, 'blue', 'RSU(3)')
-
-    
-    offset = [(19, -10), (30, -10), (19, -10), (19, -10), (19, -10), (19, -10), (19, -10), (24, 1), (19, -8.5), (30, -10), (19, -10), (16, -10), (19, -8.5)]
-    offset = [(19, -10)] * 13
-    # offset[1]= (19, -10.4)
-
-    vru_list = []
-    # for i in [1,2,3,5]:  # Loop per gli ID dei pedoni da 1 a 4
-    for i in peds:
-      pos_data = get_position_at_time(i, dt, off_x=offset[i-1][0], off_y=offset[i-1][1])
-      # if pos_data is None:
-      #     raise ValueError(f"Pedestrian {i} has missing data at time {dt}")
-      if pos_data is not None:
-        pos = pos_data[:2]  # Estrae solo (x, y)
-        heading, velocity = pos_data[2:] 
-        vru_list.append({'pos': pos, 
-                            'id': i, 
-                            'head': heading, 
-                            'vel':velocity })
-        if i ==10:
-          print(f"Pedestrian {i} position: {pos}, heading: {heading}, velocity: {velocity}")
-        renderer.draw_pedestrian(pos, 'orange', f'P{i}')
-        
-  
-    '''
-      RAYCASTING
-    '''
-
-    # 3.4. Sensor Simulation
-    # 3.4.1. EV Sensor Processing
-    if EV_present:  
-      EV_pos = lin_velocity(EV_pos,0,dt, 15) #(pos, start, time_steps, velocity)
-      # EV_pos =   (10,    -2.5)
-      renderer.draw_vehicle(EV_pos, VEH_LENGTH, VEH_WIDTH, 'yellow', 'EV',label_color='black')
-      list_ev_hits = renderer.draw_rays(ray_origin=EV_pos, ray_length=20, n_rays=300, heading=0, fan_deg=200, 
-                                        vehicles=vehicles_ev_see, color='yellow', vru_objects=vru_list, alpha=alpha_ray,vru_occlusion_shadow=False)
-
-
-    list_rsu_hits = renderer.draw_rays(ray_cfg=RSU1_RAY_CONFIG, vehicles=vehicles_rsu_see, vru_objects=vru_list, alpha=alpha_ray,vru_occlusion_shadow=False)
-    
-    list_rsu2_hits = renderer.draw_rays(ray_cfg=RSU3_RAY_CONFIG, vehicles=vehicles_rsu_see, vru_objects=vru_list, alpha=alpha_ray,vru_occlusion_shadow=False)
-    
-    
-    # Getting the IDs of the pedestrians seen by the RSU and CV
-    sorted_rsu_hits = sorted(list_rsu_hits, key=lambda hit: hit['id']) 
-    ped_seen_rsu = [k['id'] for k in sorted_rsu_hits]
-    sorted_rsu2_hits = sorted(list_rsu2_hits, key=lambda hit: hit['id']) 
-    ped_seen_rsu2 = [k['id'] for k in sorted_rsu2_hits]
-    ped_seen_both = sorted(set(ped_seen_rsu) & set(ped_seen_rsu2))
-
-    '''
-      SENSORS UPDATE
-    '''
-    # Get the sensor list for RSU1 
-    # We are adding to the measurement dict the measurement from the RSU. 
-    counter = get_sensor_list(sensor_pos=RSU_POS, sorted_hits=sorted_rsu_hits, dR=dR1, dA=dA1, id_sens=1000, renderer=renderer, dt=dt, 
-                    measurements = measurements, percent_faulty=85, plot_set=True,colors= color_dict,counter=counter)
-    
-
-    # Get the sensor list for EV
-    # get_sensor_list(sensor_pos=EV_pos, sorted_hits=sorted_cv_hits, dR=dR1, dA=dA1, id_sens=2000, renderer=renderer, dt=dt,
-    #                 measurements = measurements, percent_faulty=2,plot_set=True, color_set='yellow')
-    # Get the sensor list for RSU2
-    counter = get_sensor_list(sensor_pos=RSU_POS2, sorted_hits=sorted_rsu2_hits, dR=dR1, dA=dA1, id_sens=3000, renderer=renderer, dt=dt, 
-                     measurements = measurements, percent_faulty=85, plot_set=True, colors=color_dict,counter=counter)
-
-    counter = generate_clutter(dt=dt, id_sens=3000, measurements=measurements, counter=counter,sensor_pos=RSU_POS2, 
-                               lambda_clutter=1, v_max_clutter=1.5,ray_cfg=RSU3_RAY_CONFIG)
-    
-    counter = generate_clutter(dt=dt, id_sens=1000, measurements=measurements, counter=counter,sensor_pos=RSU_POS2, 
-                               lambda_clutter=1, v_max_clutter=1.5,ray_cfg=RSU3_RAY_CONFIG)
-        
-    track_manager = TrackManager(dA1=dA1, dR1=dR1,measurements=measurements, sme_dict=SME_dict, 
-                                 verbose=False, renderer=renderer, id_counter=id_counter, color_dict=color_dict)
-    
-    SME_dict, measurements, id_counter = track_manager.process_measurements(dt)
-
-    # Check that the pedestrian is inside the polygon
-    for ped in vru_list:
-        # Only check pedestrians that are in the ped_seen_both list
-        if ped['id'] in ped_seen_both:
-            if not any(check_point_in_polygon(est.Xp, ped['pos']) for est in SME_dict.values()):
-                logging.error(f"Pedestrian {ped['id']} is outside all polygons")
-
-    mature_tracks = {(k,v) for k,v in SME_dict.items() if v.mature_track}
-    
-    # for (key,val) in mature_tracks:
-    #   print(f"Track id: {key} - Sensor id: {val.sensor_id} - Ped id: {val.id} ")
-
-
-    # print(f"tentative tracks: {[v.id for v in tentative_tracks]}")
-
-    '''
-      DATA ASSOCIATION
-    '''
-    mature_track_keys = [k for k, v in SME_dict.items() if v.mature_track]
-    assoc = DataAssociationManager(id_sens_1=1000,id_sens_2=3000, measurements=measurements, sme_dict=SME_dict, blacklist=blacklist, mature_tracks_id=mature_track_keys, dt=dt)
-    blacklist = assoc.compute_cost_matrix(verbose=False)
-    # logger.debug(f"Blacklist: {[tuple(sorted(fs)) for fs in blacklist]}")
-
-    ass_list1 = assoc.solve(verbose=False)
-    assoc.validate()
-    # print(f"the ass list is {ass_list1}")
-    
-    # assoc2 = DataAssociationManager(id_sens_1=1,id_sens_2=3, measurements=measurements, sme_dict=SME_dict, blacklist=blacklist)
-    # assoc2.compute_cost_matrix(verbose=False)
-    # ass_list2 = assoc2.solve(verbose=False)
-    # assoc2.validate()
-    # ass_list = [] 
-    ass_list = ass_list1 
-    
-    # Add this line:
-    if dt >0.2:
-      tot_error = check_pedestrians_in_intersections(vru_list, ped_seen_both, ass_list, SME_dict, measurements,tot_error)
-
-    '''
-      VISUALISE THE ASSOCIATION. 
-    '''
-    for pair in ass_list:
-      poly1 = Polygon(SME_dict[pair[0]].Xc)
-      poly2 = Polygon(SME_dict[pair[1]].Xc)
-      intersection = np.array(poly1.intersection(poly2).exterior.coords)
-      renderer.ax.plot(intersection[:, 0], intersection[:, 1], color='orange', label='Target Path', zorder=100000, linewidth=2)
-      # data.append(pair[0])
-      # data.append(poly1.intersection(poly2).area)
-      
-    
-    frame_duration: time = time.time() - frame_start_time
-    
-    # renderer.log_to_csv(filename, data) 
-    if RENDER_PLOT:
-      renderer.render_frame(  
-          # x_limits=(-2, 44),
-          # y_limits=(-10, 10),
-          x_limits=(10, 35 ),
-          y_limits=(-10,-3),
-          title = f"V2X Collaborative Perception Scenario {dt}",
-          xlabel ='x [Global]',
-          ylabel ='y [Global]',
-          scale=windows_scale,
-          recording=RECORDING,
-          dt=dt,
-          screen_dt=7
+    # ----------------
+    for dt in time_steps:
+      dt = np.round(dt, 2)
+      # 3.1. Environment Setup
+      logger.info(
+          f"--------------------dt:{dt} (previous frame: {frame_duration:.3f}s)--------------------"
       )
-    
-    # Calculate previous frame duration
-    
-    # 10) Pause for a short while
-    if dt > manual_mode and manual_mode != -1:
-      input(f"Press enter for the next step... {dt}")
-    else:
-      # print(f"Time: {dt}")
-      time_sleep = 0 if RENDER_PLOT == False else time_sleep
+      print(dt)
+      renderer.clear_scene()
+      renderer.draw_road(ROAD_START_X, ROAD_START_Y, ROAD_LENGTH, LANE_WIDTH, NUM_LANES, SHOULDER_WIDTH)
+
+      # 3.2. Static Object Rendering
+      renderer.draw_vehicle(PV_POS, VEH_LENGTH, VEH_WIDTH, "lightgray", "PV", label_color="black")
+      renderer.draw_rsu(RSU_POS, 2, 1, "#01bf62", "RSU1")
+      renderer.draw_rsu(RSU_POS2, 2, 1, "#ff914d", "RSU2")
+
+      offset = [(18.5, -11)] * 13
+      vru_list = []
+
+      # Draw pedestrian trajectories (past as dotted, future 0.8s as solid) in black
+      for i in peds:
+          trajectory_segments = get_trajectory_segments( i, dt, future_duration=0.8, off_x=offset[i - 1][0], 
+                                                        off_y=offset[i - 1][1],csv_filename = csv_traj)
+          if trajectory_segments is not None:
+              past_x, past_y, future_x, future_y = trajectory_segments
+              renderer.draw_trajectory_segments( past_x, past_y, future_x, future_y, color="black", 
+                                                linewidth=1.5, alpha=0.7)
+
+      # loop for drawing pedestrians and collecting their data
+      for i in peds:
+          pos_data = get_position_at_time(i, dt, off_x=offset[i - 1][0], off_y=offset[i - 1][1], csv_filename=csv_traj)  
+          if pos_data is not None:
+              pos = pos_data[:2]  # Estrae solo (x, y)
+              heading, velocity = pos_data[2:]
+              vru_list.append({"pos": pos, "id": i, "head": heading, "vel": velocity})
+              if i == 10:
+                  print(
+                      f"Pedestrian {i} position: {pos}, heading: {heading}, velocity: {velocity}"
+                  )
+              renderer.draw_pedestrian(pos, "red", f"P{i-1}")
+
+      """
+      RAYCASTING
+      """
+      renderer.draw_vehicle(EV_pos, VEH_LENGTH, VEH_WIDTH, "lightblue", "EV", label_color="black")
+
+      list_rsu_hits = renderer.draw_rays(ray_cfg=RSU1_RAY_CONFIG, vru_objects=vru_list)  
+      list_rsu2_hits = renderer.draw_rays(ray_cfg=RSU3_RAY_CONFIG, vru_objects=vru_list)
+
+      # Getting the IDs of the pedestrians seen by the RSU and CV
+      sorted_rsu_hits = sorted(list_rsu_hits, key=lambda hit: hit["id"])
+      ped_seen_rsu = [k["id"] for k in sorted_rsu_hits]
+      sorted_rsu2_hits = sorted(list_rsu2_hits, key=lambda hit: hit["id"])
+      ped_seen_rsu2 = [k["id"] for k in sorted_rsu2_hits]
+      ped_seen_both = sorted(set(ped_seen_rsu) & set(ped_seen_rsu2))
+
+
+      """
+      SENSORS UPDATE
+      """
+      # Get the sensor list for RSU1
+      # We are adding to the measurement dict the measurement from the RSU.
+      counter = get_sensor_list(
+          sensor_pos=RSU_POS, sorted_hits=sorted_rsu_hits,
+          dR=dR1, dA=dA1, id_sens=1000, renderer=renderer, dt=dt,
+          measurements=measurements, percent_faulty=perc_working,
+          plot_set=False, counter=counter)
+
+      # Get the sensor list for RSU2
+      counter = get_sensor_list(
+          sensor_pos=RSU_POS2, sorted_hits=sorted_rsu2_hits,
+          dR=dR1, dA=dA1, id_sens=3000, renderer=renderer, dt=dt,
+          measurements=measurements, percent_faulty=perc_working,
+          plot_set=False, counter=counter)    
+
+      counter = generate_clutter(
+          dt=dt, id_sens=3000, measurements=measurements,
+          counter=counter, sensor_pos=RSU_POS2,
+          lambda_clutter=lambda_clutter,
+          v_max_clutter=1.5, ray_cfg=RSU3_RAY_CONFIG,
+          plot_set=True, renderer=renderer)
+       
+
+      counter = generate_clutter(
+          dt=dt, id_sens=1000, measurements=measurements,
+          counter=counter, sensor_pos=RSU_POS,
+          lambda_clutter=lambda_clutter,
+          v_max_clutter=1.5,ray_cfg=RSU1_RAY_CONFIG,
+          plot_set=True,renderer=renderer)
+
+      track_manager = TrackManager(
+          dA1=dA1, dR1=dR1, measurements=measurements,
+          sme_dict=SME_dict, verbose=False,
+          renderer=renderer, id_counter=id_counter,
+          color_dict=color_dict, err_vel=velocity_error_speed,
+          err_heading=heading_error_degrees,
+      )
+
+      SME_dict, measurements, id_counter = track_manager.process_measurements(dt)
+
+      # Check that the pedestrian is inside the polygon
+      for ped in vru_list:
+          # Only check pedestrians that are in the ped_seen_both list
+          if ped["id"] in ped_seen_both:
+              if not any(
+                  check_point_in_polygon(est.Xp, ped["pos"])
+                  for est in SME_dict.values()
+              ):
+                  logging.error(f"Pedestrian {ped['id']} is outside all polygons")
+
+      mature_tracks = {(k, v) for k, v in SME_dict.items() if v.mature_track}
+
+
+      """
+      DATA ASSOCIATION
+      """
+      mature_track_keys = [k for k, v in SME_dict.items() if v.mature_track]
+      if use_greedy:
+          assoc = DataAssociationManagerGreedy(
+              id_sens_1=1000,
+              id_sens_2=3000,
+              measurements=measurements,
+              sme_dict=SME_dict,
+              blacklist=blacklist,
+              mature_tracks_id=mature_track_keys,
+              dt=dt,
+          )
+      else:
+          assoc = DataAssociationManagerNew(
+              id_sens_1=1000,
+              id_sens_2=3000,
+              measurements=measurements,
+              sme_dict=SME_dict,
+              blacklist=blacklist,
+              mature_tracks_id=mature_track_keys,
+              dt=dt,
+          )
+
+      blacklist = assoc.compute_cost_matrix(verbose=False)
+
+      logger.debug(f"Blacklist: {[tuple(sorted(fs)) for fs in blacklist]}")
+
+      ass_list = assoc.solve(verbose=False)
+
+      # Add this line:
+      if dt > 0.2:
+          tot_error = check_pedestrians_in_intersections(
+              vru_list, ped_seen_both, ass_list, SME_dict, measurements, tot_error, dt
+          )
+
+      """
+      VISUALISE THE ASSOCIATION. 
+      """
+      # instantiate once per frame
+      post = PostAssociation(
+          SME_dict=SME_dict,
+          renderer=renderer,
+          dA=dA1,
+          dR=dR1,
+          max_acc=0.5,
+          max_vel=1.8,
+      )
+
+      # draw raw intersections
+      post.visualize_intersections(ass_list)
       
-      time.sleep(time_sleep)
-    #
-  # Done animating
-  # renderer.finalize()
-  
-  logger.debug(f"total number of errors: {tot_error}")
-  return tot_error
+      
+      # draw reachable‐set expansions
+      post.visualize_predictions(ass_list, dt)
+
+      """
+      RENDER THE GLOBAL PREDICTION
+      """
+
+      # renderer.log_to_csv(filename, data)
+      if RENDER_PLOT:
+          renderer.render_frame(
+              x_limits=(0, 34),
+              y_limits=(-9, 8),
+              title=f"{dt}",
+              xlabel="$X [m]$",
+              ylabel="$Y [m]$",
+              scale=windows_scale,
+              recording=RECORDING,
+              save_axes=True,
+              dt=dt,
+              screen_dt=7,
+          )
+
+      # 10) Pause for a short while
+      if dt > manual_mode and manual_mode != -1:
+          input(f"Press enter for the next step... {dt}")
+      else:
+          # print(f"Time: {dt}")
+          time_sleep = 0 if RENDER_PLOT == False else time_sleep
+
+          time.sleep(time_sleep)
+        #
+        
+    # Done animating
+    renderer.finalize()
+
+    logger.debug(f"total number of errors: {tot_error}")
+    return tot_error
+
 
 if __name__ == "__main__":
     Main()

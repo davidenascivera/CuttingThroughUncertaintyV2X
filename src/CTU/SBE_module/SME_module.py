@@ -1,18 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import box, Polygon
-
-from .utils import minkowski_safe, minkowski # We have 2 functions for the minkowski sum. "Minkowski" uses the O(m) alg, Minkowski_safe uses the O(m n) alg.
-from .utils import plot_poly, regular_polygon, reorder_polygon, get_annular_sector_points
-import time 
-
 import logging
 logger = logging.getLogger(__name__)
+
+USE_LINEAR_ALG = True
+if USE_LINEAR_ALG:
+    from SBE_module.utils_efficient import minkowski_efficient as minkowski
+else:
+    from SBE_module.utils import minkowski_safe as minkowski 
+from SBE_module.utils import  regular_polygon, reorder_polygon, get_annular_sector_points
+
 
 class SMEModule:
     def __init__(self, Xc:np.ndarray, delta_a: int, delta_r: float,max_vel = 1.8, id:int = 10, acc:float = 0.5, dt:float = 0.1, 
                  ax = None, plot_set:bool = False,plot_reach:bool = False, plot_id:bool = False, sens_id:int = 0, verbose:bool = False, 
-                 colors:dict[int,str] = {}) -> None:
+                 colors:dict[int,str] = {}, track_id:int = -1, err_vel:float = 0, err_heading:float = 0 ) -> None: 
         
         # --- State and prediction ---
         self.Xc: np.ndarray = Xc            # Current set (polygon)
@@ -21,6 +24,7 @@ class SMEModule:
         self.last_timestamp_intersection: float = -1  # Last valid timestamp for intersection
         self.last_vel_meas = None       # Last velocity measurement (a, v)
         self.centroid:tuple[float,float] = None
+        self.track_id = track_id
 
         # --- Physical model ---
         self.max_vel = max_vel
@@ -51,7 +55,8 @@ class SMEModule:
         
         # Note that here we are not considering the bounded heading and vel but we are just considering a square.
         
-        
+        self.err_heading = err_heading
+        self.err_vel = err_vel
         
     
     @property
@@ -68,6 +73,13 @@ class SMEModule:
         
         time needed for the naive is 0.0032 seconds
         '''
+        if self.Xp is not None:
+            # self.ax.plot(self.Xp[:, 0], self.Xp[:, 1], color=self.color_spec, label='Target Path', zorder=2000, linewidth=0.7, ls ='-')
+            centroid_x = np.mean(self.Xp[:, 0])
+            centroid_y = np.mean(self.Xp[:, 1])
+            # self.ax.scatter(centroid_x, centroid_y, color=self.color_spec, marker='s', label='Target Path', zorder=2000, s=10)
+            self._compute_center_of_polygon()
+        
         self.last_vel_meas = (a_meas, v_meas)
         # Select the last known intersection state if available; otherwise use the current center.
         last_state = self.last_state_intersection if self.last_state_intersection is not None else self.Xc
@@ -82,7 +94,7 @@ class SMEModule:
         prediction_time = dt_update -self.last_timestamp_intersection + self.dt
         
         # Estimate the positional uncertainty due to bounded acceleration.
-        acc_displacement = 0.5 * prediction_time ** 2
+        acc_displacement = 0.5 * prediction_time ** 2 * self.acc
         acc_poly = regular_polygon(4, radius = acc_displacement)
         acc_poly = reorder_polygon(acc_poly)
         
@@ -92,22 +104,28 @@ class SMEModule:
         
         # Step 0 - Compute the annular sector of the sensor. NB that we are considering the same error for the one used for estimating the positon.
         #          So at the end we consider an error in heading of +-5 degrees and an error in distance of +-0.5 m.
-        max_vel_poly = get_annular_sector_points(a_0=a_meas,r_0= v_meas, delta_a=self.delta_a, delta_r=self.delta_r, future_steps=prediction_time)
-        # Step 1 - Compute the reachable set of the velocity
-        reach_vel = minkowski_safe(max_vel_poly, last_state, plot_intermediate = False)
-    
-        # Step 2 - Compute the reachable set of the acceleration
-        reac_acc = minkowski_safe(reach_vel, acc_poly, plot_intermediate = False)
-        
-        # Step 3 - Compute the reachable set of the max position
-        max_vel =  minkowski_safe(max_vel_radius, self.Xc, plot_intermediate = False)
+        max_vel_poly = get_annular_sector_points(a_0=a_meas,r_0= v_meas, delta_a=self.err_heading, delta_r=self.err_vel, future_steps=prediction_time)
+        # Step 1 - Compute the reachable set of the 
+        # start_time = time.perf_counter_ns()
+        reach_vel = minkowski(max_vel_poly, last_state, plot_intermediate = False)
+        # end_time = time.perf_counter_ns()
+        # print(f"AAA: Time for the efficient minkowski: {(end_time - start_time)*1e-6} ms")
 
+        # Step 2 - Compute the reachable set of the acceleration
+        reac_acc = minkowski(reach_vel, acc_poly, plot_intermediate = False)
+
+        # Step 3 - Compute the reachable set of the max position
+        max_vel =  minkowski(max_vel_radius, self.Xc, plot_intermediate = False)
+        
+        
         
         # Step 4 - Prune the reachable set of the position with the velocity circles
         poly_max_vel = Polygon(max_vel) 
         poly_reach_acc = Polygon(reac_acc)
         poly_intersection = poly_max_vel.intersection(poly_reach_acc)
         
+        # # DOUBLE INTEGRATION ENABLER
+        # poly_intersection  = poly_max_vel   
         
         if poly_intersection.is_empty:  
             raise ValueError("The reachable set is empty")
@@ -149,7 +167,7 @@ class SMEModule:
 
         """
         
-        
+         # This is for the previous reachable set
         self.ax.plot(self.Xp[:, 0], self.Xp[:, 1], color='pink', label='Target Path', zorder=2000, linewidth=lw_prev_reach)
 
         current_set = self.Xp # Note that we are considering the previus prediction.
@@ -172,6 +190,8 @@ class SMEModule:
                 self.miss_in_a_row = 0
                 if self.plot_set:
                     self.ax.plot(self.Xc[:, 0], self.Xc[:, 1], color=self.color_spec, label='Target Path', zorder=2000, linewidth=lw_int)
+                    # if self.mature_track:
+                        # logger.critical(f"AREA {self.sensor_id}: {Polygon(self.Xc).area}")
                 return True
         else:
             self.misses += 1
@@ -180,7 +200,7 @@ class SMEModule:
         
         
     def improve_or_delete_track(self):
-        if self.hits > 3 and self.misses == 0 and not self.mature_track:
+        if self.hits >= 1 and self.misses == 0 and not self.mature_track:
             logger.info(f"Track that is tracking ped {self.id} from sensor {self.sensor_id} upgraded to mature status")
             self.mature_track = True
             
@@ -190,7 +210,7 @@ class SMEModule:
             
             self.ready_to_delete = True
             
-        if self.miss_in_a_row > 4:
+        if self.miss_in_a_row > 3:
             if self.verbose:
                 logger.debug(f"track {self.id} maturo eliminato dal sensore {self.sensor_id}")
             self.ready_to_delete = True
@@ -205,7 +225,7 @@ class SMEModule:
         Returns:
             Tuple[float, float]: Centroid coordinates (x, y)
         """
-        poly = Polygon(self.Xc)
+        poly = Polygon(self.Xp)
         return poly.centroid.x, poly.centroid.y
 
 if __name__ == "__main__":

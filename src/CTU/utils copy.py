@@ -1,8 +1,8 @@
 import numpy as np
-import json, random, os
+import json, random
 from shapely.geometry import Polygon, Point
 from typing import Tuple
-from SBE_module.utils import vertices_meas_range_bearing
+from SME_mine.utils import vertices_meas_range_bearing
 from constants import MAP_MIN_X, MAP_MIN_Y, MAP_MAX_X, MAP_MAX_Y, color_dict
 from typing import Optional, Tuple
 import pandas as pd 
@@ -204,7 +204,7 @@ def get_position_at_time(
     t: float = 0.0,
     off_x: float = 15.0,
     off_y: float = -2.0,
-    csv_filename: str = None,
+    csv_filename: str = "crowds_trajectories.csv",
 ) -> Optional[Tuple[float, float, float, float]]:
     """
     Returns x, y, and heading for a given pedestrian at specified time t.
@@ -220,8 +220,6 @@ def get_position_at_time(
         tuple: (x, y, heading) at time t (heading in radians)
         None: if no data is available for interpolation.
     """
-    if csv_filename is None:
-        csv_filename = os.path.join(os.path.dirname(__file__), "crowds_trajectories.csv")
     # Load the CSV data
     df = pd.read_csv(csv_filename)
 
@@ -263,7 +261,7 @@ def get_full_trajectory(
     ID_pedestrian: int,
     off_x: float = 15.0,
     off_y: float = -2.0,
-    csv_filename: str = None,
+    csv_filename: str = "crowds_trajectories.csv",
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """
     Returns the full trajectory (x, y coordinates) for a given pedestrian.
@@ -278,8 +276,6 @@ def get_full_trajectory(
         tuple: (x_coords, y_coords) arrays of the full trajectory
         None: if no data is available for the pedestrian.
     """
-    if csv_filename is None:
-        csv_filename = os.path.join(os.path.dirname(__file__), "crowds_trajectories.csv")
     # Load the CSV data
     df = pd.read_csv(csv_filename)
 
@@ -302,7 +298,7 @@ def get_trajectory_segments(
     future_duration: float = 0.8,
     off_x: float = 15.0,
     off_y: float = -2.0,
-    csv_filename: str = None,
+    csv_filename: str = "crowds_trajectories.csv",
 ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """
     Returns past and future trajectory segments for a given pedestrian at a specific time.
@@ -319,8 +315,6 @@ def get_trajectory_segments(
         tuple: (past_x, past_y, future_x, future_y) arrays of trajectory segments
         None: if no data is available for the pedestrian.
     """
-    if csv_filename is None:
-        csv_filename = os.path.join(os.path.dirname(__file__), "crowds_trajectories.csv")
     # Load the CSV data
     df = pd.read_csv(csv_filename)
 

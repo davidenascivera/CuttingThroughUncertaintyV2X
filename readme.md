@@ -7,14 +7,16 @@ CTU is a pedestrian tracking simulation for V2X collaborative perception. The co
 ## Setup
 
 ```bash
-conda env create -f environment.yml -n ctu
-conda activate ctu
-pip install -e .
+conda env create -f environment.yml
+conda activate v2x-perception
 ```
 
 ## Run
 
 ```bash
-cd src/CTU
-python main.py
+python src/CTU/main.py
 ```
+
+
+# Content:
+To execute the simulation, simply run the main file. The SBE module contains the dedicated components for Set-Based Estimation, including the linear operators used to compute segment intersections and the Minkowski sum in a linear form.

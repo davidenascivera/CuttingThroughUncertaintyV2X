@@ -1,15 +1,9 @@
+# Parameters:
+alpha_ray: float = 0.0
 import numpy as np
-def generate_ray_angles(n_rays: int, fan_deg: float, heading_deg: float) -> np.ndarray:
-    """
-    Generates ray angles for a sensor given the number of rays, the fan aperture in degrees,
-    and the heading of the sensor in degrees.
 
-    Returns:
-        np.ndarray: Array of ray angles in radians.
-    """
-    fan_rad = np.radians(fan_deg)
-    heading_rad = np.radians(heading_deg)
-    return np.linspace(-fan_rad / 2, fan_rad / 2, n_rays) + heading_rad
+color_dict = {1000: "#01bf62", 2000: "yellow", 3000: "#ff914d"}
+
 
 # 1. ROAD GEOMETRY PARAMETERS
 # -------------------------
@@ -44,7 +38,7 @@ VRU_pos2 = (23.5,-2)
 VRU_pos3 = (23.5,   -8)
 EV_pos =   (5,    -2.5)
 RSU_POS  = (20,    5.5)
-RSU_POS2  = (20,    -9)
+RSU_POS2  = (22,    -9)
 
 dR1 = 1   # Note that the error is expressed in r_0+-dR1 and a_0 +-dA1
 dA1 = 7
@@ -71,14 +65,14 @@ RSU1_RAY_CONFIG = {
   'n_rays':  180,
   'heading': 270,
   'fan_deg': 100,
-  'color': 'green',
+  'color': '#01bf62',
 }
 
 RSU3_RAY_CONFIG = {
   'origin':  RSU_POS2 + np.array([1, 0.5]),
   'ray_length': 18,
-  'n_rays':  100,
-  'heading': 45,
-  'fan_deg': 90,
-  'color': 'blue',
+  'n_rays':  200,
+  'heading': 90 ,
+  'fan_deg': 150,
+  'color': '#ff914d',
 }

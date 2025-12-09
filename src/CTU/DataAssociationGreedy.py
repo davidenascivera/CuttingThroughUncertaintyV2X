@@ -27,6 +27,8 @@ class DataAssociationManager:
         # Import the blacklist and compute the intial matrix.
         self.blacklist = blacklist
         self.cost_matrix =  np.zeros((self.n_1,self.n_2)) # Create the cost matrix. Now it is non padded
+        
+        print("I am the greedy data association manager")
 
     
     def compute_cost_matrix(self, verbose: bool = False, verbose_prepad:bool = False) -> np.ndarray:
