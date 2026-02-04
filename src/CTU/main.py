@@ -64,9 +64,13 @@ def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
     blacklist = set()
     counter: int = 0
 
-    peds = [1, 2, 3, 4, 5, 6, 9]
+    peds = [1, 2, 3, 4, 5, 6]
     # peds = [2, 3,3,4,5]  # The one not crossing the intersection and realistic
-
+    offset = [(18.5, -11)] * 13
+    offset[0]= (18.5, -10.5)
+    offset[4]= (20.5, -8)
+    offset[5]= (24, -8)
+    
     # ------------------------------------------------
     # Create Renderer
     # ------------------------------------------------
