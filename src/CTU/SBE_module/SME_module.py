@@ -13,7 +13,7 @@ from SBE_module.utils import  regular_polygon, reorder_polygon, get_annular_sect
 
 
 class SMEModule:
-    def __init__(self, Xc:np.ndarray, delta_a: int, delta_r: float,max_vel = 1.8, id:int = 10, acc:float = 0.5, dt:float = 0.1, 
+    def __init__(self, Xc:np.ndarray, delta_a: int, delta_r: float, max_vel = 2, id:int = 10, acc:float = 0.6, dt:float = 0.1, 
                  ax = None, plot_set:bool = False,plot_reach:bool = False, plot_id:bool = False, sens_id:int = 0, verbose:bool = False, 
                  colors:dict[int,str] = {}, track_id:int = -1, err_vel:float = 0, err_heading:float = 0 ) -> None: 
         

@@ -51,7 +51,7 @@ def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
     RENDER_PLOT: bool = True  # Render the frames
     time_sleep = 0.01  # Inter-frame delay
     manual_mode = 9  # Frame-by-frame mode (-1 for auto)
-    windows_scale = 0.4  # Scale the window size
+    windows_scale = 0.6  # Scale the window size
 
     lambda_clutter = 0  # Clutter rate
 
@@ -64,8 +64,8 @@ def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
     blacklist = set()
     counter: int = 0
 
-    peds = [1, 2, 3, 4, 5, 6, 8, 9]
-    peds = [2, 3]  # The one not crossing the intersection and realistic
+    peds = [1, 2, 3, 4, 5, 6, 9]
+    # peds = [2, 3,3,4,5]  # The one not crossing the intersection and realistic
 
     # ------------------------------------------------
     # Create Renderer
@@ -110,7 +110,7 @@ def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
       renderer.draw_rsu(RSU_POS, 2, 1, "#01bf62", "RSU1")
       renderer.draw_rsu(RSU_POS2, 2, 1, "#ff914d", "RSU2")
 
-      offset = [(18.5, -11)] * 13
+      offset = [(18.5, -9.5)] * 13
       vru_list = []
 
       # Draw pedestrian trajectories (past as dotted, future 0.8s as solid) in black
@@ -271,8 +271,8 @@ def Main(greedy: bool = False, heading_error_degrees: float = 8) -> int:
       # renderer.log_to_csv(filename, data)
       if RENDER_PLOT:
           renderer.render_frame(
-              x_limits=(0, 34),
-              y_limits=(-9, 8),
+              x_limits=(18, 34),
+              y_limits=(-9, 0),
               title=f"{dt}",
               xlabel="$X [m]$",
               ylabel="$Y [m]$",

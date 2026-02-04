@@ -28,7 +28,6 @@ Thumbs.db
 .vscode/
 
 # Data & outputs (if generated)
-*.csv
 *.npy
 *.npz
 sim_log.csv
